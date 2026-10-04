@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dricie Bar POS - Beer Stock Market</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body { background-color: #121418; color: #f8f9fa; user-select: none; }
+    .login-container { height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .login-box { background: #1c2128; padding: 2.5rem; border-radius: 12px; border: 1px solid #30363d; width: 100%; max-width: 400px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+    .card-drink { background: #1c2128; border: 1px solid #2d333b; border-radius: 12px; transition: transform 0.05s ease; cursor: pointer; }
+    .card-drink:active { transform: scale(0.97); border-color: #388bfd; }
+    .price-tag { font-size: 1.4rem; font-weight: 700; color: #3fb950; }
+    .category-title { font-size: 1.1rem; text-transform: uppercase; letter-spacing: 1px; color: #8b949e; margin-top: 1.2rem; }
+    .cart-panel { background: #181d24; border-left: 2px solid #2d333b; min-height: 100vh; position: sticky; top: 0; }
+    .timer-badge { font-family: monospace; font-size: 1.1rem; }
+  </style>
+</head>
+<body>
+  <div id="app" class="container-fluid p-0">
+    
+    <div v-if="!isAuthenticated" class="login-container">
+      <div class="login-box text-center">
+        <h3 class="fw-bold mb-4">🍻 Dricie POS Terminal</h3>
+        <div class="form-floating mb-3 text-dark">
+          <input type="text" class="form-control" id="user" v-model="username" placeholder="Username" @keyup.enter="login">
+          <label for="user">Username</label>
+        </div>
+        <div class="form-floating mb-3 text-dark">
+          <input type="password" class="form-control" id="pass" v-model="password" placeholder="Password" @keyup.enter="login">
+          <label for="pass">Password</label>
+        </div>
+        <button class="btn btn-primary w-100 py-2 fw-bold" @click="login">ACCESS TERMINAL</button>
+        <p v-if="loginError" class="text-danger mt-3 mb-0 fw-semibold">{{ loginError }}</p>
+      </div>
+    </div>
+
+    <div v-else class="row m-0">
+      <div class="col-md-8 col-lg-9 p-4">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h2 class="m-0 fw-bold">🍻 Dricie POS Terminal</h2>
+          <div class="d-flex align-items-center gap-3">
+            <div class="form-check form-switch m-0 me-3">
+              <input class="form-check-input" type="checkbox" id="editMode" v-model="editMode">
+              <label class="form-check-label text-warning fw-bold" for="editMode">✏️ Edit Prices</label>
+            </div>
+            <span class="badge bg-secondary p-2 timer-badge">Next Tick: {{ tickTimeLeft }}s</span>
+            <button class="btn btn-outline-danger btn-sm" @click="triggerCrash">💥 Trigger Market Crash</button>
+          </div>
+        </div>
+
+        <div v-for="(drinks, category) in groupedBeers" :key="category">
+          <div class="category-title fw-semibold">{{ category }}</div>
+          <div class="row g-2 mt-1">
+            <div class="col-6 col-sm-4 col-md-3" v-for="(b, id) in drinks" :key="id">
+              <div class="card-drink p-3 h-100 d-flex flex-column justify-content-between" 
+                   :class="{ 'border-warning': editMode }" 
+                   @click="handleDrinkClick(id)">
+                <div>
+                  <div class="fw-bold text-truncate">{{ b.name }}</div>
+                  <div class="small text-secondary">Floor: €{{ b.minPrice.toFixed(2) }}</div>
+                </div>
+                <div class="d-flex justify-content-between align-items-end mt-2">
+                  <span class="price-tag" :class="{'text-warning': editMode}">€{{ b.price.toFixed(2) }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-md-4 col-lg-3 cart-panel p-4 d-flex flex-column justify-content-between">
+        <div>
+          <div class="d-flex justify-content-between align-items-center mb-3 pb-2 border-bottom border-secondary">
+            <h4 class="m-0 fw-bold">Current Order</h4>
+            <button class="btn btn-sm btn-outline-secondary" @click="clearCart" :disabled="isCartEmpty">Clear</button>
+          </div>
+          <div v-if="isCartEmpty" class="text-secondary text-center my-5">Click on drinks to add them.</div>
+          <div class="list-group list-group-flush mb-3" v-else>
+            <div v-for="(item, id) in cart" :key="id" class="list-group-item bg-transparent text-light border-secondary d-flex justify-content-between align-items-center px-0">
+              <div>
+                <div class="fw-semibold">{{ beers[id].name }}</div>
+                <small class="text-secondary">€{{ item.lockedPrice.toFixed(2) }}</small>
+              </div>
+              <div class="d-flex align-items-center gap-2">
+                <button class="btn btn-sm btn-dark border-secondary px-2" @click="decrementCart(id)">-</button>
+                <span class="fw-bold">{{ item.count }}</span>
+                <button class="btn btn-sm btn-dark border-secondary px-2" @click="incrementCart(id)">+</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="border-top border-secondary pt-3">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <span class="fs-5 text-secondary">Total:</span>
+            <span class="fs-3 fw-bold text-success">€{{ totalAmount.toFixed(2) }}</span>
+          </div>
+          <button class="btn btn-success btn-lg w-100 py-3 fw-bold" @click="checkout" :disabled="isCartEmpty">VALIDATE SALE</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"></script>
+  <script>
+    const { createApp } = Vue;
+    createApp({
+      data() {
+        return {
+          isAuthenticated: false, 
+          username: '', password: '', loginError: '',
+          socket: null, beers: {}, tickTimeLeft: 30, cart: {},
+          editMode: false 
+        };
+      },
+      computed: {
+        isCartEmpty() { return Object.keys(this.cart).length === 0; },
+        groupedBeers() {
+          const groups = {};
+          for (const [id, b] of Object.entries(this.beers)) {
+            const cat = b.category || 'Other';
+            if (!groups[cat]) groups[cat] = {};
+            groups[cat][id] = b;
+          }
+          return groups;
+        },
+        totalAmount() {
+          return Object.values(this.cart).reduce((sum, item) => sum + (item.count * item.lockedPrice), 0);
+        }
+      },
+      methods: {
+        login() {
+          if (this.username === 'dricie' && this.password === 'ockham2026') {
+            this.isAuthenticated = true; this.loginError = '';
+          } else {
+            this.loginError = 'Invalid credentials. Try again.'; this.password = '';
+          }
+        },
+        handleDrinkClick(id) {
+          if (this.editMode) {
+            // ENGLISH PROMPT
+            const min = this.beers[id].minPrice.toFixed(2);
+            let rawInput = prompt(`New price for ${this.beers[id].name}?\n(Floor price: €${min})`, this.beers[id].price.toFixed(2));
+            if (rawInput !== null) {
+              let cleanInput = rawInput.replace(',', '.'); 
+              let newPrice = parseFloat(cleanInput);
+              if (!isNaN(newPrice)) {
+                this.socket.emit('force_price', { id: id, price: newPrice });
+              }
+            }
+          } else {
+            if (!this.cart[id]) this.cart[id] = { count: 1, lockedPrice: this.beers[id].price };
+            else this.cart[id].count++;
+          }
+        },
+        incrementCart(id) { if (this.cart[id]) this.cart[id].count++; },
+        decrementCart(id) {
+          if (this.cart[id]) {
+            this.cart[id].count--;
+            if (this.cart[id].count <= 0) delete this.cart[id];
+          }
+        },
+        clearCart() { this.cart = {}; },
+        checkout() {
+          if (this.isCartEmpty) return;
+          const orderPayload = {};
+          for (const [id, item] of Object.entries(this.cart)) { orderPayload[id] = item.count; }
+          this.socket.emit('order', orderPayload);
+          this.clearCart();
+        },
+        triggerCrash() {
+          if (confirm("🚨 Stock Crash 🚨\nAll the prices are going to crash. Confirm?")) {
+            this.socket.emit('admin_crash');
+          }
+        }
+      },
+      mounted() {
+        this.socket = io();
+        this.socket.on('market_update', (data) => {
+          this.beers = data.beers;
+          this.tickTimeLeft = data.tickTimeLeft;
+        });
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>
